@@ -1,0 +1,15 @@
+[package]
+name = "rshtml"
+version = "0.1.0"
+edition = "2021"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+quote = "1"
+codegen = "0.2"
+regex = "1"
+thiserror = "1"
+lazy_static = "1"
+prettyplease = "0.1"
+syn = "1"
