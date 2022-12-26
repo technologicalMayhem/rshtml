@@ -158,8 +158,8 @@ enum HeaderExtractionError {
 }
 
 #[test]
-fn extract_header_basic() {
-    let html_in = include_str!("../tests/templates/basic_in.html");
+fn extract_header__single_file() {
+    let html_in = include_str!("../tests/input/single_file/index.html");
     let expected_result = HeaderData {
         struct_name: String::from("Basic"),
         fields: vec![

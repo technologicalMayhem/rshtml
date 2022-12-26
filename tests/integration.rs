@@ -1,9 +1,9 @@
 use rshtml::{convert_html_to_rs};
 
 #[test]
-fn basic_template() {
-    let html_in = include_str!("templates/basic_in.html");
-    let html_out = include_str!("examples/basic.rs");
+fn single_file() {
+    let html_in = include_str!("input/single_file/index.html");
+    let html_out = include_str!("output/single_file/pages.rs");
 
     let result = convert_html_to_rs(html_in.into(), "Basic.html").unwrap();
 
