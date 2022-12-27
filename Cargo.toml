@@ -12,3 +12,6 @@ thiserror = "1"
 lazy_static = "1"
 prettyplease = "0.1"
 minify = "1.2"
+
+[dev-dependencies]
+insta = "1.23.0"

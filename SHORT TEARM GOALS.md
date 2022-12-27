@@ -1,4 +1,4 @@
 - [ ] Replace thiserror with anyhow
 - [X] Rewrite public methods to make full use of codegen
-- [ ] Write better test cases using insta
+- [X] Write better test cases using insta
 - [ ] Check code coverage and write more tests accordingly
