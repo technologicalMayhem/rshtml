@@ -1,7 +1,7 @@
 use std::{
     error::Error,
     fs::{read_dir, read_to_string},
-    path::{Path, PathBuf},
+    path::{Path},
 };
 
 use codegen::{Impl, Scope, Struct, Type};
@@ -179,40 +179,6 @@ fn generate_implementation(html: &str, for_: Type, header: &HeaderData) -> Impl 
     impl_
 }
 
-/// Removes the `base` part for the given `path`.
-///
-/// If the paths are identical, `None` is returned.
-/// If `base` is not a part of `path`, `None` is returned.
-fn remove_base(path: &Path, base: &Path) -> Option<PathBuf> {
-    let mut path_components = path.components();
-    let mut base_components = base.components();
-
-    loop {
-        //We clone path_components as not not actually advance it
-        let p = path_components.clone().next();
-        let b = base_components.next();
-
-        if p == None {
-            //If path end before it's base, we return None
-            return None;
-        }
-        if b == None {
-            //The base ended before the path, so we return the rest
-            //If we had it advanced it for real we would be missing one piece of the path
-            return Some(path_components.as_path().to_path_buf());
-        }
-        if p? == b? {
-            //Both pieces are the same
-            //Advance it for real this time
-            path_components.next();
-            continue;
-        }
-
-        //There is mismatch between the two, we return None
-        return None;
-    }
-}
-
 //Copied from https://stackoverflow.com/a/38406885/9627790
 /// Capitalizes the first letter.
 fn uppercase_first_letter(s: &str) -> String {
@@ -220,25 +186,6 @@ fn uppercase_first_letter(s: &str) -> String {
     match c.next() {
         None => String::new(),
         Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
-    }
-}
-
-/// Check if the given `path` starts with `base`
-fn does_path_start_with(path: &Path, base: &Path) -> bool {
-    let mut path_c = path.components();
-    let mut base_c = base.components();
-
-    loop {
-        let p = path_c.next();
-        let b = base_c.next();
-
-        if b == None {
-            return true;
-        }
-        if p == b {
-            continue;
-        }
-        return false;
     }
 }
 
@@ -285,62 +232,4 @@ fn extract_header_single_file() {
     };
 
     assert_eq!(expected_result, result);
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    mod remove_base {
-        use super::*;
-
-        #[test]
-        fn remove_base_diferent_base() {
-            let path = Path::new("foo/bar/foobar/baz");
-            let base = Path::new("baz/foobar");
-
-            let result = remove_base(path, base);
-
-            assert_eq!(result, None)
-        }
-
-        #[test]
-        fn remove_base_identical_path() {
-            let path = Path::new("foo/bar/foobar/baz");
-            let base = Path::new("foo/bar/foobar/baz");
-
-            let result = remove_base(path, base);
-
-            assert_eq!(result, None)
-        }
-
-        #[test]
-        fn remove_base_same_base() {
-            let path = Path::new("foo/bar/foobar/baz");
-            let base = Path::new("foo/bar");
-
-            let result = remove_base(path, base).unwrap();
-
-            assert_eq!(result, Path::new("foobar/baz"))
-        }
-    }
-    mod does_path_start_with {
-        use super::*;
-
-        #[test]
-        fn does_start_with() {
-            let a = Path::new("/foo/bar/baz");
-            let b = Path::new("/foo/bar");
-
-            assert!(does_path_start_with(a, b));
-        }
-
-        #[test]
-        fn does_not_start_with() {
-            let a = Path::new("/foo/bar/baz");
-            let b = Path::new("/flim/flam");
-
-            assert!(does_path_start_with(a, b) == false);
-        }
-    }
 }
