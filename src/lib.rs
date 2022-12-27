@@ -1,19 +1,82 @@
-use std::{error::Error, path::Path};
+use std::{
+    error::Error,
+    fs::read_to_string,
+    path::{Path, PathBuf},
+};
 
 use lazy_static::lazy_static;
 use quote::{__private::TokenStream, format_ident, quote};
 use regex::{Captures, Regex};
 use thiserror::Error;
+use walkdir::WalkDir;
+
+pub fn convert_directory(path: &str) -> Result<String, Box<dyn Error>> {
+    let path = Path::new(path);
+    if path.is_dir() == false {
+        return Err(Box::new(DirectoryConversionError::IsNotADirectory));
+    }
+
+    let mut walker = WalkDir::new(path).into_iter();
+    //Walk once to get rid of the root directory
+    walker.next();
+    let mut full_code = String::new();
+    let mut cur_path = PathBuf::new();
+
+    for entry in walker {
+        let entry = match entry {
+            Ok(entry) => entry,
+            Err(e) => {
+                return Err(Box::new(e));
+            }
+        };
+
+        if entry.file_type().is_dir() {
+            full_code += &format!("pub mod {} {{", entry.file_name().to_string_lossy());
+            cur_path = entry.path().to_path_buf();
+            continue;
+        }
+        if entry.file_type().is_file() {
+            let path = entry.path().parent().unwrap();
+            while does_path_start_with(path, cur_path.as_path()) == false {
+                cur_path = cur_path.as_path().parent().unwrap().to_path_buf();
+                full_code += "}";
+            }
+        }
+
+        let html = match read_to_string(entry.path()) {
+            Ok(html) => html,
+            Err(e) => {
+                return Err(Box::new(e));
+            }
+        };
+
+        let path_buf = remove_base(entry.path(), &path).unwrap();
+        let filename = path_buf.as_path();
+        let code = match convert_html_to_rs(&html, &filename.to_string_lossy()) {
+            Ok(out) => out,
+            Err(e) => {
+                return Err(e);
+            }
+        };
+
+        full_code += &code;
+    }
+
+    let syn = syn::parse_file(&full_code)?;
+    let out = prettyplease::unparse(&syn);
+
+    Ok(out)
+}
 
 pub fn convert_html_to_rs(html: &str, filename: &str) -> Result<String, Box<dyn Error>> {
-    let struck_name = match Path::new(filename).file_stem() {
-        Some(name) => name.to_string_lossy().into_owned(),
+    let struct_name = match Path::new(filename).file_stem() {
+        Some(name) => uppercase_first_letter(&name.to_string_lossy()),
         None => {
-            return Err(Box::new(ConversionError::FileNameInvalid));
+            return Err(Box::new(FileConversionError::FileNameInvalid));
         }
     };
 
-    let header_data = extract_header(&html, &struck_name)?;
+    let header_data = extract_header(&html, &struct_name)?;
     let struct_ = generate_struct(&header_data);
     let impl_ = generate_implementation(&html, &header_data);
 
@@ -38,7 +101,10 @@ fn extract_header(html: &str, struct_name: &str) -> Result<HeaderData, HeaderExt
     let header: Vec<&str> = MATCH_HEADER.find_iter(&html).map(|m| m.as_str()).collect();
 
     if header.is_empty() {
-        return Err(HeaderExtractionError::HeaderNotFound);
+        return Ok(HeaderData {
+            struct_name: struct_name.into(),
+            fields: Vec::new(),
+        });
     }
 
     let mut fields: Vec<(String, String)> = Vec::new();
@@ -90,13 +156,10 @@ fn generate_struct(data: &HeaderData) -> TokenStream {
     }
 }
 
-fn generate_implementation(
-    html: &str,
-    header: &HeaderData,
-) -> TokenStream {
+fn generate_implementation(html: &str, header: &HeaderData) -> TokenStream {
     lazy_static! {
         static ref MATCH_VARIABLE: Regex =
-            Regex::new(r"(?P<escape>@@)|@(?P<field>[_a-z0-9]+?)@").unwrap();
+            Regex::new(r"(?P<escape>@@)|@(?P<field>[_a-zA-Z0-9]+?)@").unwrap();
         static ref MATCH_HEADER: Regex = Regex::new(r"\{[\s\S]*\}\n").unwrap();
     }
 
@@ -123,16 +186,101 @@ fn generate_implementation(
         })
         .collect();
 
+    let mut new_arguments = String::new();
+    for field in &header.fields {
+        if new_arguments.is_empty() == false {
+            new_arguments += ", "
+        }
+
+        new_arguments += &format!("{}: {}", field.0, field.1);
+    }
+
+    let new_arguments: TokenStream = new_arguments.parse().unwrap();
+    let new_assignments: Vec<TokenStream> = header
+        .fields
+        .iter()
+        .map(|field| format!("{}, ", field.0).parse().unwrap())
+        .collect();
+
     let code = quote! {
         impl #struct_name {
             pub fn render(self) -> String {
                 #(#assignments)*
                 format!(#output)
             }
+
+            pub fn new(#new_arguments) -> Self {
+                Self {
+                    #(#new_assignments)*
+                }
+            }
         }
     };
 
     code
+}
+
+/// Removes the `base` part for the given `path`.
+///
+/// If the paths are identical, `None` is returned.
+/// If `base` is not a part of `path`, `None` is returned.
+fn remove_base(path: &Path, base: &Path) -> Option<PathBuf> {
+    let mut path_components = path.components();
+    let mut base_components = base.components();
+
+    loop {
+        //We clone path_components as not not actually advance it
+        let p = path_components.clone().next();
+        let b = base_components.next();
+
+        if p == None {
+            //If path end before it's base, we return None
+            return None;
+        }
+        if b == None {
+            //The base ended before the path, so we return the rest
+            //If we had it advanced it for real we would be missing one piece of the path
+            return Some(path_components.as_path().to_path_buf());
+        }
+        if p? == b? {
+            //Both pieces are the same
+            //Advance it for real this time
+            path_components.next();
+            continue;
+        }
+
+        //There is mismatch between the two, we return None
+        return None;
+    }
+}
+
+//Copied from https://stackoverflow.com/a/38406885/9627790
+/// Capitalizes the first letter.
+fn uppercase_first_letter(s: &str) -> String {
+    let mut c = s.chars();
+    match c.next() {
+        None => String::new(),
+        Some(f) => f.to_uppercase().collect::<String>() + c.as_str(),
+    }
+}
+
+/// Check if the given `path` starts with `base`
+fn does_path_start_with(path: &Path, base: &Path) -> bool {
+    let mut path_c = path.components();
+    let mut base_c = base.components();
+
+    loop {
+        let p = path_c.next();
+        let b = base_c.next();
+
+        if b == None {
+            return true;
+        }
+        if p == b {
+            continue;
+        }
+        return false;
+    }
 }
 
 #[derive(Debug, PartialEq)]
@@ -142,13 +290,19 @@ struct HeaderData {
 }
 
 #[derive(Error, Debug)]
-enum ConversionError {
+pub enum DirectoryConversionError {
+    #[error("The path does not point to a valid directory")]
+    IsNotADirectory,
+}
+
+#[derive(Error, Debug)]
+pub enum FileConversionError {
     #[error("The file name is invalid")]
     FileNameInvalid,
 }
 
 #[derive(Error, Debug)]
-enum HeaderExtractionError {
+pub enum HeaderExtractionError {
     #[error("The document does not have a header")]
     HeaderNotFound,
     #[error("The header is malformed: Missing field on line {line}")]
@@ -158,8 +312,11 @@ enum HeaderExtractionError {
 }
 
 #[test]
-fn extract_header__single_file() {
+fn extract_header_single_file() {
     let html_in = include_str!("../tests/input/single_file/index.html");
+
+    let result = extract_header(&html_in, "Basic").unwrap();
+
     let expected_result = HeaderData {
         struct_name: String::from("Basic"),
         fields: vec![
@@ -168,7 +325,63 @@ fn extract_header__single_file() {
         ],
     };
 
-    let result = extract_header(&html_in, "Basic").unwrap();
-
     assert_eq!(expected_result, result);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    mod remove_base {
+        use super::*;
+
+        #[test]
+        fn remove_base_diferent_base() {
+            let path = Path::new("foo/bar/foobar/baz");
+            let base = Path::new("baz/foobar");
+
+            let result = remove_base(path, base);
+
+            assert_eq!(result, None)
+        }
+
+        #[test]
+        fn remove_base_identical_path() {
+            let path = Path::new("foo/bar/foobar/baz");
+            let base = Path::new("foo/bar/foobar/baz");
+
+            let result = remove_base(path, base);
+
+            assert_eq!(result, None)
+        }
+
+        #[test]
+        fn remove_base_same_base() {
+            let path = Path::new("foo/bar/foobar/baz");
+            let base = Path::new("foo/bar");
+
+            let result = remove_base(path, base).unwrap();
+
+            assert_eq!(result, Path::new("foobar/baz"))
+        }
+    }
+    mod does_path_start_with {
+        use super::*;
+
+        #[test]
+        fn does_start_with() {
+            let a = Path::new("/foo/bar/baz");
+            let b = Path::new("/foo/bar");
+
+            assert!(does_path_start_with(a, b));
+        }
+
+        #[test]
+        fn does_not_start_with() {
+            let a = Path::new("/foo/bar/baz");
+            let b = Path::new("/flim/flam");
+
+            assert!(does_path_start_with(a, b) == false);
+        }
+    }
 }
