@@ -6,11 +6,9 @@ edition = "2021"
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
 [dependencies]
-quote = "1"
-codegen = "0.2"
+codegen = {version = "0.2", git = "https://gitlab.com/technologicalMayhem/codegen"}
 regex = "1"
 thiserror = "1"
 lazy_static = "1"
 prettyplease = "0.1"
-syn = "1"
-walkdir = "2"
+minify = "1.2"
