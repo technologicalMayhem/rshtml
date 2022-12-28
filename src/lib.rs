@@ -12,12 +12,12 @@ use thiserror::Error;
 
 pub fn convert_directory(path: &str) -> Result<String, Box<dyn Error>> {
     let path = Path::new(path);
-    if path.is_dir() == false {
+    if !path.is_dir() {
         return Err(Box::new(DirectoryConversionError::IsNotADirectory));
     }
 
     let mut scope = Scope::new();
-    process_directory(&path, &mut scope)?;
+    process_directory(path, &mut scope)?;
 
     Ok(scope.to_string())
 }
@@ -46,7 +46,7 @@ fn process_directory(path: &Path, scope: &mut Scope) -> Result<(), Box<dyn Error
 
 pub fn convert_file(path: &str) -> Result<String, Box<dyn Error>> {
     let path = Path::new(path);
-    let html = read_to_string(&path)?;
+    let html = read_to_string(path)?;
 
     let file_stem = path.file_stem().unwrap().to_string_lossy();
     let struct_name = uppercase_first_letter(&file_stem);
@@ -61,9 +61,9 @@ fn convert_html_to_rs(
     struct_name: &str,
     scope: &mut Scope,
 ) -> Result<(), Box<dyn Error>> {
-    let header_data = extract_header(&html, &struct_name)?;
+    let header_data = extract_header(html, struct_name)?;
     let struct_ = generate_struct(&header_data);
-    let impl_ = generate_implementation(&html, struct_.ty().clone(), &header_data);
+    let impl_ = generate_implementation(html, struct_.ty().clone(), &header_data);
 
     scope.push_struct(struct_);
     scope.push_impl(impl_);
@@ -77,7 +77,7 @@ fn extract_header(html: &str, struct_name: &str) -> Result<HeaderData, HeaderExt
         static ref MATCH_FIELD: Regex = Regex::new(r"(\w+): (\w+)").unwrap();
     }
 
-    let header: Vec<&str> = MATCH_HEADER.find_iter(&html).map(|m| m.as_str()).collect();
+    let header: Vec<&str> = MATCH_HEADER.find_iter(html).map(|m| m.as_str()).collect();
 
     if header.is_empty() {
         return Ok(HeaderData {
@@ -87,10 +87,8 @@ fn extract_header(html: &str, struct_name: &str) -> Result<HeaderData, HeaderExt
     }
 
     let mut fields: Vec<(String, String)> = Vec::new();
-    let mut line_count = 0;
 
-    for line in header {
-        line_count += 1;
+    for (line_count, line) in header.into_iter().enumerate() {
 
         let (name, type_) = match MATCH_FIELD.captures(line) {
             Some(f) => (f.get(1), f.get(2)),
@@ -142,7 +140,7 @@ fn generate_implementation(html: &str, for_: Type, header: &HeaderData) -> Impl 
     let without_header = MATCH_HEADER.replace(html, "");
     let processed_hmtl = minify(&without_header);
     let output = MATCH_VARIABLE.replace_all(&processed_hmtl, |caps: &Captures| {
-        if let Some(_) = caps.name("escape") {
+        if caps.name("escape").is_some() {
             return "@".into();
         }
         if let Some(field) = caps.name("field") {
@@ -212,16 +210,16 @@ pub enum HeaderExtractionError {
     #[error("The document does not have a header")]
     HeaderNotFound,
     #[error("The header is malformed: Missing field on line {line}")]
-    MalformedFieldName { line: u32 },
+    MalformedFieldName { line: usize },
     #[error("The header is malformed: Missing type on line {line}")]
-    MalformedFieldType { line: u32 },
+    MalformedFieldType { line: usize },
 }
 
 #[test]
 fn extract_header_single_file() {
     let html_in = include_str!("../tests/input/single_file/index.html");
 
-    let result = extract_header(&html_in, "Basic").unwrap();
+    let result = extract_header(html_in, "Basic").unwrap();
 
     let expected_result = HeaderData {
         struct_name: String::from("Basic"),
